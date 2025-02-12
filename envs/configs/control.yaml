@@ -14,32 +14,33 @@ num_observation: 22
 max_steps: 2500             # episode length: 200s
 
 # aircraft config
-altitude_limit: 2500.0
-acceleration_limit: 300.0
-max_velocity: 3          # mh
-min_velocity: 0.01       # mh
-min_alpha: -20             # 度
-max_alpha: 45              # 度
+altitude_limit: 2500.0      # 最低高度
+acceleration_limit: 300.0   # 最大加速度
+max_velocity: 3             # 最大速度 mh
+min_velocity: 0.01          # 最小速度 mh
+min_alpha: -20              # 度
+max_alpha: 45               # 度
 min_beta: -30
 max_beta: 30
 color: Red
 model: f16
 
 # target config
-max_pitch_increment: 3 # rad
-max_heading_increment: 3 # rad
-max_velocities_u_increment: 300.0  # feet
-max_check_interval: 2500                 # step
-min_check_interval: 300
+max_pitch_increment: 0.3 # rad 用于更新目标
+max_heading_increment: 0.3 # rad 用于更新目标
+max_velocities_u_increment: 30.0  # feet 用于更新目标
+reach_posture_steps: 10    # step 到达目标姿态后持续10步
+max_check_interval: 250       # step
+min_check_interval: 0
 
-# init config
+# init config   # 用于初始化杆量
 init_state: {
   init_altitude_ft: 20000,
   init_heading: 0,
   init_vt_ft: 1100,
   init_T: 2000
 }
-max_altitude: 20000
-min_altitude: 19000
-max_vt: 1200
-min_vt: 1000
+max_altitude: 20000     # feet, 用于初始化高度
+min_altitude: 19000     # feet, 用于初始化高度
+max_vt: 1200            # feet/s 用于初始化速度
+min_vt: 1000            # feet/s 用于初始化速度

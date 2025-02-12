@@ -3,6 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from termination_condition_base import BaseTerminationCondition
 import torch
+from utils.utils import _t2n
 
 
 class LowAltitude(BaseTerminationCondition):
@@ -31,6 +32,8 @@ class LowAltitude(BaseTerminationCondition):
         done = torch.zeros_like(bad_done)
         exceed_time_limit = torch.zeros_like(bad_done)
         if torch.any(bad_done):
-            self.log(f'altitude is too low!')
-            print(torch.sum(bad_done), 'altitude is too low!')
+            # self.log(f'altitude is too low!')
+            # print(torch.sum(bad_done), 'altitude is too low!')
+            info["done"]["LowAltitude"] = torch.sum(bad_done).item()
+            info["termination"]["LowAltitude"] = _t2n(bad_done)
         return bad_done, done, exceed_time_limit, info

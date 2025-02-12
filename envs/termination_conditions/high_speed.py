@@ -3,6 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from termination_condition_base import BaseTerminationCondition
 import torch
+from utils.utils import _t2n
 
 
 class HighSpeed(BaseTerminationCondition):
@@ -31,6 +32,8 @@ class HighSpeed(BaseTerminationCondition):
         done = torch.zeros_like(bad_done)
         exceed_time_limit = torch.zeros_like(bad_done)
         if torch.any(bad_done):
-            self.log(f'speed is too high!')
-            print(torch.sum(bad_done), 'speed is too high!')
+            # self.log(f'speed is too high!')
+            # print(torch.sum(bad_done), 'speed is too high!')
+            info["done"]["HighSpeed"] = torch.sum(bad_done).item()
+            info["termination"]["HighSpeed"] = _t2n(bad_done)
         return bad_done, done, exceed_time_limit, info

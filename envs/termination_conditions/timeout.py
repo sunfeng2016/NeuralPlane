@@ -4,6 +4,7 @@ sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 import torch
 from termination_condition_base import BaseTerminationCondition
 
+from utils.utils import _t2n
 
 class Timeout(BaseTerminationCondition):
     """
@@ -26,10 +27,14 @@ class Timeout(BaseTerminationCondition):
         Returns:
             (tuple): (bad_done, done, exceed_time_limit, info)
         """
-        exceed_time_limit = (env.step_count - self.max_steps) >= 0
+        # exceed_time_limit = (env.step_count - self.max_steps) >= 0
+        exceed_time_limit = (env.episode_step - self.max_steps) >= 0
         bad_done = torch.zeros_like(exceed_time_limit)
         done = torch.zeros_like(exceed_time_limit)
         if torch.any(exceed_time_limit):
             self.log(f"step limits!")
-            print(torch.sum(exceed_time_limit), "step limits!")
+            # print(torch.sum(exceed_time_limit), "step limits!")
+            info["done"]["Timeout"] = torch.sum(exceed_time_limit).item()
+            info["termination"]["Timeout"] = _t2n(exceed_time_limit)
+            
         return bad_done, done, exceed_time_limit, info

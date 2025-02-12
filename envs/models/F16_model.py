@@ -34,11 +34,13 @@ class F16Model(BaseModel):
         done = env.is_done.bool()
         bad_done = env.bad_done.bool()
         exceed_time_limit = env.exceed_time_limit.bool()
-        reset = (done | bad_done) | exceed_time_limit
+        # reset = (done | bad_done) | exceed_time_limit
+        reset = (exceed_time_limit | bad_done) # 0108
         size = torch.sum(reset)
         self.s[reset, :] = torch.zeros((size, self.num_states), device=self.device)  # state
         self.u[reset, :] = torch.zeros((size, self.num_controls), device=self.device)
         self.s[reset, 2] = torch.rand_like(self.s[reset, 2]) * (self.max_altitude - self.min_altitude) + self.min_altitude
+        # self.s[reset, 5] = torch.rand_like(self.s[reset, 5]) * 2 * torch.pi - torch.pi
         self.s[reset, 6] = torch.rand_like(self.s[reset, 6]) * (self.max_vt - self.min_vt) + self.min_vt
         self.u[reset, 0] = self.init_state['init_T']
         self.recent_s[reset] = self.s[reset]
@@ -50,10 +52,10 @@ class F16Model(BaseModel):
     
     def update(self, action):
         action = torch.clamp(action, -1, 1)
-        T = 0.9 * self.u[:, 0].reshape(-1, 1) + 0.1 * action[:, 0].reshape(-1, 1) * 0.225 * 76300 / 0.3048
-        el = 0.9 * self.u[:, 1].reshape(-1, 1) + 0.1 * action[:, 1].reshape(-1, 1) * 45
-        ail = 0.9 * self.u[:, 2].reshape(-1, 1) + 0.1 * action[:, 2].reshape(-1, 1) * 45
-        rud = 0.9 * self.u[:, 3].reshape(-1, 1) + 0.1 * action[:, 3].reshape(-1, 1) * 45
+        T = 0.9 * self.u[:, 0].reshape(-1, 1) + 0.1 * action[:, 0].reshape(-1, 1) * 0.225 * 76300 / 0.3048  # 油门
+        el = 0.9 * self.u[:, 1].reshape(-1, 1) + 0.1 * action[:, 1].reshape(-1, 1) * 45                     # 升降舵
+        ail = 0.9 * self.u[:, 2].reshape(-1, 1) + 0.1 * action[:, 2].reshape(-1, 1) * 45                    # 副翼
+        rud = 0.9 * self.u[:, 3].reshape(-1, 1) + 0.1 * action[:, 3].reshape(-1, 1) * 45                    # 方向舵
         lef = torch.zeros((self.n, 1), device=self.device)
         self.recent_u = self.u
         self.u = torch.hstack((T, el))
@@ -116,17 +118,25 @@ class F16Model(BaseModel):
     
     def get_control_surface(self):
         return self.u[:, 1], self.u[:, 2], self.u[:, 3], self.u[:, 4]
-
+    
+    def get_control_norm(self):
+        return torch.linalg.norm(self.u[:, 1:4] - self.recent_u[:, 1:4], dim=1)
     
     def get_velocity(self):
         # 根据飞行状态计算三轴速度
-        sina = torch.sin(self.s[:, 7])
+        sina = torch.sin(self.s[:, 7])  # 迎角
         cosa = torch.cos(self.s[:, 7])
-        sinb = torch.sin(self.s[:, 8])
+        sinb = torch.sin(self.s[:, 8])  # 侧滑角
         cosb = torch.cos(self.s[:, 8])
+        
+        # vel_u = self.s[:, 6] * cosa * cosb # x轴速度
+        # vel_v = self.s[:, 6] * sina # y轴速度
+        # vel_w = self.s[:, 6] * cosa * sinb # z轴速度
+        
         vel_u = self.s[:, 6] * cosb * cosa # x轴速度
         vel_v = self.s[:, 6] * sinb # y轴速度
         vel_w = self.s[:, 6] * cosb * sina # z轴速度
+        
         return vel_u, vel_v, vel_w
     
     def get_acceleration(self):

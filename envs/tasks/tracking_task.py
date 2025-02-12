@@ -26,9 +26,22 @@ class TrackingTask(BaseTask):
         self.target_npos = torch.zeros(self.n, device=self.device)
         self.target_epos = torch.zeros(self.n, device=self.device)
         self.target_altitude = torch.zeros(self.n, device=self.device)
+        self.reach_target_steps = torch.zeros(self.n, device=self.device)  # 0110
+        self.cur_npos = torch.zeros(self.n, device=self.device)
+        self.cur_epos = torch.zeros(self.n, device=self.device)
+        self.cur_altitude = torch.zeros(self.n, device=self.device)
         self.max_distance = getattr(self.config, 'max_distance', 2000)
         self.min_distance = getattr(self.config, 'min_distance', 2000)
         self.noise_scale = getattr(self.config, 'noise_scale', 0.01)
+        
+        self.min_alpha = getattr(config, 'min_alpha', -20)      # 攻角
+        self.max_alpha = getattr(config, 'max_alpha', 45)
+        self.min_beta = getattr(config, 'min_beta', -30)        # 侧滑角
+        self.max_beta = getattr(config, 'max_beta', 30)
+        
+        self.max_distance = 10000
+        self.min_distance = 5000
+        self.min_distance2target = torch.zeros(self.n, device=self.device)
 
         self.reward_functions = [
             PositionReward(self.config),
@@ -41,7 +54,7 @@ class TrackingTask(BaseTask):
             HighSpeed(self.config),
             LowSpeed(self.config),
             ExtremeState(self.config),
-            # Timeout(self.config),
+            Timeout(self.config),
             UnreachTarget(self.config, device)
         ]
 
@@ -54,21 +67,61 @@ class TrackingTask(BaseTask):
 
         npos, epos, altitude = env.model.get_position()
 
-        distance = torch.rand(size, device=self.device) * (self.max_distance - self.min_distance) + self.min_distance
-        theta1 = torch.rand(size, device=self.device) * torch.pi / 3 - torch.pi / 6
-        # theta1 = torch.ones(size, device=self.device) * torch.pi / 2
-        theta2 = torch.rand(size, device=self.device) * torch.pi / 3 - torch.pi / 6
-        # theta2 = torch.zeros(size, device=self.device)
-        delta_npos = distance * torch.cos(theta1) * torch.cos(theta2)
-        delta_epos = distance * torch.cos(theta1) * torch.sin(theta2)
-        delta_altitude = distance * torch.sin(theta1)
-        # delta_npos = 0
+        distance = torch.rand(size, device=self.device) * (self.max_distance - self.min_distance) + self.min_distance  # [1500, 2500] feet
+        # theta1 = torch.rand(size, device=self.device) * torch.pi / 3 - torch.pi / 6  # [-pi/6, pi/6]
+        # theta2 = torch.rand(size, device=self.device) * torch.pi / 3 - torch.pi / 6  # [-pi/6, pi/6]
+        theta1 = torch.rand(size, device=self.device) * torch.pi / 6 - torch.pi / 12  # [-pi/12, pi/12]
+        theta2 = torch.rand(size, device=self.device) * torch.pi / 2 - torch.pi / 4  # [-pi/4, pi/4]
+        
+        _, _, heading = env.model.get_posture()
+        theta2 = wrap_PI(heading[reset] + theta2)
+        
+        delta_npos = distance * torch.cos(theta1) * torch.cos(theta2)                # [1125, 2500]
+        delta_epos = distance * torch.cos(theta1) * torch.sin(theta2)                # [-1082.5, 1082.5] feet
+        delta_altitude = distance * torch.sin(theta1)                                # [-1250, 1250] feet
+        
+        # delta_npos = 3000
         # delta_epos = 0
-        # delta_altitude = distance
+        # delta_altitude = 0
 
         self.target_npos[reset] = npos[reset] + delta_npos
         self.target_epos[reset] = epos[reset] + delta_epos
         self.target_altitude[reset] = altitude[reset] + delta_altitude
+        
+        self.min_distance2target[reset] = distance
+        
+    def get_delta_target(self, env):
+        cur_npos, cur_epos, cur_altitude = env.model.get_position()
+        # cur_npos = self.cur_npos
+        # cur_epos = self.cur_epos
+        # cur_altitude = self.cur_altitude
+        
+        target_npos = self.target_npos
+        target_epos = self.target_epos
+        target_altitude = self.target_altitude
+        
+        roll, pitch, yaw = env.model.get_posture()
+        
+        # 计算目标方向向量
+        direction_vector = torch.stack([target_npos-cur_npos, target_epos-cur_epos, target_altitude-cur_altitude], dim=1) # (N, 3)
+        direction_norm = torch.norm(direction_vector, dim=1, keepdim=True) # (N, 1)
+        direction_unit = direction_vector / direction_norm # (N, 3)
+        
+        # 计算目标偏航角
+        yaw_target = torch.atan2(direction_unit[:, 1], direction_unit[:, 0]) 
+        
+        # 计算目标俯仰角
+        pitch_target = torch.asin(direction_unit[:, 2])
+        
+        # 计算delta
+        delta_yaw = wrap_PI(yaw_target - yaw)
+        delta_pitch = wrap_PI(pitch_target - pitch)
+        
+        # # 限制调整量在 [-0.3, 0.3] 范围内
+        # delta_yaw = torch.clamp(delta_yaw, -0.3, 0.3)
+        # delta_pitch = torch.clamp(delta_pitch, -0.3, 0.3)
+        
+        return delta_pitch, delta_yaw, direction_norm
     
     def get_obs(self, env):
         """
@@ -109,9 +162,16 @@ class TrackingTask(BaseTask):
         el, ail, rud, lef = env.model.get_control_surface()
         eas2tas = env.model.get_EAS2TAS()
 
-        norm_delta_npos = (npos - self.target_npos).reshape(-1, 1) * 0.3048 / 1000
-        norm_delta_epos = (epos - self.target_epos).reshape(-1, 1) * 0.3048 / 1000
-        norm_delta_altitude = (altitude - self.target_altitude).reshape(-1, 1) * 0.3048 / 1000
+        # 0121
+        # norm_delta_npos = (npos - self.target_npos).reshape(-1, 1) * 0.3048 / 1000
+        # norm_delta_epos = (epos - self.target_epos).reshape(-1, 1) * 0.3048 / 1000
+        # norm_delta_altitude = (altitude - self.target_altitude).reshape(-1, 1) * 0.3048 / 1000
+        
+        delta_pitch, delta_yaw, distance = self.get_delta_target(env)
+        delta_pitch = delta_pitch.reshape(-1, 1)
+        delta_yaw = delta_yaw.reshape(-1, 1)
+        distance = distance.reshape(-1, 1) * 0.3048 / 1000
+        
         norm_altitude = altitude.reshape(-1, 1) * 0.3048 / 5000
         roll_sin = torch.sin(roll.reshape(-1, 1))
         roll_cos = torch.cos(roll.reshape(-1, 1))
@@ -123,6 +183,11 @@ class TrackingTask(BaseTask):
         alpha_cos = torch.cos(alpha.reshape(-1, 1))
         beta_sin = torch.sin(beta.reshape(-1, 1))
         beta_cos = torch.cos(beta.reshape(-1, 1))
+        # alpha_deg = (env.model.get_AOA() * 180 / torch.pi).reshape(-1, 1)
+        # beta_deg = (env.model.get_AOS() * 180 / torch.pi).reshape(-1, 1)
+        # mask_alpha = (alpha_deg < self.min_alpha) | (alpha_deg > self.max_alpha)
+        # mask_beta = (beta_deg < self.min_beta) | (beta_deg > self.max_beta)
+        
         norm_P = P.reshape(-1, 1)
         norm_Q = Q.reshape(-1, 1)
         norm_R = R.reshape(-1, 1)
@@ -131,8 +196,10 @@ class TrackingTask(BaseTask):
         norm_ail = ail.reshape(-1, 1) / 45
         norm_rud = rud.reshape(-1, 1) / 45
         norm_lef = lef.reshape(-1, 1) / 45
-        obs = torch.hstack((norm_delta_npos, norm_delta_epos))
-        obs = torch.hstack((obs, norm_delta_altitude))
+        # obs = torch.hstack((norm_delta_npos, norm_delta_epos))
+        # obs = torch.hstack((obs, norm_delta_altitude))
+        obs = torch.hstack((delta_pitch, delta_yaw))
+        obs = torch.hstack((obs, distance))
         obs = torch.hstack((obs, norm_altitude))
         obs = torch.hstack((obs, roll_sin))
         obs = torch.hstack((obs, roll_cos))
@@ -143,6 +210,11 @@ class TrackingTask(BaseTask):
         obs = torch.hstack((obs, alpha_cos))
         obs = torch.hstack((obs, beta_sin))
         obs = torch.hstack((obs, beta_cos))
+        # obs = torch.hstack((obs, alpha_deg))
+        # obs = torch.hstack((obs, beta_deg))
+        # obs = torch.hstack((obs, mask_alpha))
+        # obs = torch.hstack((obs, mask_beta))
+        
         obs = torch.hstack((obs, norm_P))
         obs = torch.hstack((obs, norm_Q))
         obs = torch.hstack((obs, norm_R))
@@ -152,4 +224,8 @@ class TrackingTask(BaseTask):
         obs = torch.hstack((obs, norm_rud))
         obs = torch.hstack((obs, norm_lef))
         obs = torch.hstack((obs, eas2tas.reshape(-1, 1)))
-        return obs + torch.randn_like(obs) * self.noise_scale
+        
+        if not self.deterministic:
+            return obs + torch.randn_like(obs) * self.noise_scale
+        else:
+            return obs

@@ -4,6 +4,7 @@ sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 import torch
 from termination_condition_base import BaseTerminationCondition
 
+from utils.utils import _t2n
 
 class Overload(BaseTerminationCondition):
     """
@@ -30,8 +31,10 @@ class Overload(BaseTerminationCondition):
         done = torch.zeros_like(bad_done)
         exceed_time_limit = torch.zeros_like(bad_done)
         if torch.any(bad_done):
-            self.log(f'acceleration is too high!')
-            print(torch.sum(bad_done), 'acceleration is too high!')
+            # self.log(f'acceleration is too high!')
+            # print(torch.sum(bad_done), 'acceleration is too high!')
+            info["done"]["Overload"] = torch.sum(bad_done).item()
+            info["termination"]["Overload"] = _t2n(bad_done)
         return bad_done, done, exceed_time_limit, info
 
     def _judge_overload(self, env):

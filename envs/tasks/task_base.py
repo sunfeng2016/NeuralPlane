@@ -11,7 +11,7 @@ class BaseTask(ABC):
     A class to subclass in order to create a task with its own observation variables,
     action variables, termination conditions and reward functions.
     """
-    def __init__(self, config, n, device, random_seed):
+    def __init__(self, config, n, device, random_seed, deterministic=False):
         self.config = config
         self.n = n
         self.device = device
@@ -22,6 +22,8 @@ class BaseTask(ABC):
 
         self.load_observation_space()
         self.load_action_space()
+        
+        self.deterministic = deterministic
         
         if random_seed is not None:
             self.seed(random_seed)

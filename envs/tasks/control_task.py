@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from task_base import BaseTask
 from reward_functions.posture_reward import PostureReward
 from reward_functions.event_driven_reward import EventDrivenReward
+from reward_functions.stability_reward import StabilityReward
 from termination_conditions.low_altitude import LowAltitude
 from termination_conditions.overload import Overload
 from termination_conditions.high_speed import HighSpeed
@@ -20,12 +21,13 @@ class ControlTask(BaseTask):
     '''
     Control target angle with control surface
     '''
-    def __init__(self, config, n, device, random_seed):
-        super().__init__(config, n, device, random_seed)
+    def __init__(self, config, n, device, random_seed, deterministic=False):
+        super().__init__(config, n, device, random_seed, deterministic)
 
         self.target_pitch = torch.zeros(self.n, device=self.device)
         self.target_heading = torch.zeros(self.n, device=self.device)
         self.target_vt = torch.zeros(self.n, device=self.device)
+        self.reach_posture_steps = torch.zeros(self.n, device=self.device)  # 0108
         self.max_pitch_increment = getattr(self.config, 'max_pitch_increment', 0.3)
         self.max_heading_increment = getattr(self.config, 'max_heading_increment', 0.3)
         self.max_velocities_u_increment = getattr(self.config, 'max_velocities_u_increment', 100)
@@ -34,6 +36,7 @@ class ControlTask(BaseTask):
         self.reward_functions = [
             PostureReward(self.config),
             EventDrivenReward(self.config),
+            StabilityReward(self.config),
         ]
         
         self.termination_conditions = [
@@ -42,8 +45,8 @@ class ControlTask(BaseTask):
             HighSpeed(self.config),
             LowSpeed(self.config),
             ExtremeState(self.config),
-            # Timeout(self.config),
-            UnreachPosture(self.config, device)
+            Timeout(self.config), # 0108
+            UnreachPosture(self.config, device) #TODO
         ]
 
     def reset(self, env):
@@ -56,16 +59,116 @@ class ControlTask(BaseTask):
         roll, pitch, heading = env.model.get_posture()
         vt = env.model.get_vt()
 
-        delta_pitch = 2 * (torch.rand(size, device=self.device) - 0.5) * self.max_pitch_increment
-        delta_heading = 2 * (torch.rand(size, device=self.device) - 0.5) * self.max_heading_increment
-        delta_vt = 2 * (torch.rand(size, device=self.device) - 0.5) * self.max_velocities_u_increment
-        # delta_pitch = 2.5
+        delta_pitch = 2 * (torch.rand(size, device=self.device) - 0.5) * self.max_pitch_increment       # 0.3
+        delta_heading = 2 * (torch.rand(size, device=self.device) - 0.5) * self.max_heading_increment   # 0.3
+        delta_vt = 2 * (torch.rand(size, device=self.device) - 0.5) * self.max_velocities_u_increment   # 30
+        
+        # delta_pitch = 0 # TODO
         # delta_heading = 0
         # delta_vt = 0
+        # delta_pitch = self.max_pitch_increment * (torch.randint(0, 3, size=(1,), device=self.device) - 1) # TODO
+        # delta_heading = self.max_heading_increment * (torch.randint(0, 3, size=(1,), device=self.device) - 1)
+        # delta_vt = self.max_velocities_u_increment * (torch.randint(0, 3, size=(1,), device=self.device) - 1)
 
         self.target_pitch[reset] = wrap_PI(pitch[reset] + delta_pitch)
         self.target_heading[reset] = wrap_PI(heading[reset] + delta_heading)
         self.target_vt[reset] = vt[reset] + delta_vt
+    
+    def get_obs_0116(self, env):
+        """
+        Convert simulation states into the format of observation_space.
+
+        observation(dim 25):
+            0. ego_delta_pitch         (unit: rad)
+            1. ego_delta_heading       (unit: rad)
+            2. ego_delta_vt            (unit: mh)
+            3. ego_altitude            (unit: 5km)
+            4. ego_roll_sin
+            5. ego_roll_cos
+            6. ego_pitch_sin
+            7. ego_pitch_cos
+            8. ego_heading_sin
+            9. ego_heading_cos
+            10. ego_vt                  (unit: mh)
+            11. ego_EAS                 (unit: mh)  
+            12. ego_alpha_sin
+            13. ego_alpha_cos
+            14. ego_beta_sin
+            15. ego_beta_cos
+            16. ego_P                  (unit: rad/s)
+            17. ego_Q                  (unit: rad/s)
+            18. ego_R                  (unit: rad/s)
+            19. ego_T                  (unit: %)
+            20. ego_el                 (unit: %)
+            21. ego_ail                (unit: %)
+            22. ego_rud                (unit: %)
+            23. ego_lef                (unit: %)
+            24. EAS2TAS
+        """
+        npos, epos, altitude = env.model.get_position()                    
+        roll, pitch, heading = env.model.get_posture()
+        vt = env.model.get_vt()
+        EAS = env.model.get_EAS()
+        alpha = env.model.get_AOA()
+        beta = env.model.get_AOS()
+        P, Q, R = env.model.get_angular_velocity()
+        T = env.model.get_thrust()
+        el, ail, rud, lef = env.model.get_control_surface()
+        eas2tas = env.model.get_EAS2TAS()
+
+        norm_delta_pitch = wrap_PI((pitch - self.target_pitch).reshape(-1, 1))
+        norm_delta_heading = wrap_PI((heading - self.target_heading).reshape(-1, 1))
+        norm_delta_vt = (vt - self.target_vt).reshape(-1, 1) * 0.3048 / 340
+        norm_altitude = altitude.reshape(-1, 1) * 0.3048 / 5000
+        roll_sin = torch.sin(roll.reshape(-1, 1))
+        roll_cos = torch.cos(roll.reshape(-1, 1))
+        pitch_sin = torch.sin(pitch.reshape(-1, 1))
+        pitch_cos = torch.cos(pitch.reshape(-1, 1))
+        heading_sin = torch.sin(heading.reshape(-1, 1))
+        heading_cos = torch.sin(heading.reshape(-1, 1))
+        norm_vt = vt.reshape(-1, 1) * 0.3048 / 340
+        norm_EAS = EAS.reshape(-1, 1) * 0.3048 / 340
+        alpha_sin = torch.sin(alpha.reshape(-1, 1))
+        alpha_cos = torch.cos(alpha.reshape(-1, 1))
+        beta_sin = torch.sin(beta.reshape(-1, 1))
+        beta_cos = torch.cos(beta.reshape(-1, 1))
+        norm_P = P.reshape(-1, 1)
+        norm_Q = Q.reshape(-1, 1)
+        norm_R = R.reshape(-1, 1)
+        norm_T = T.reshape(-1, 1) / 0.225 / 76300 * 0.3048
+        norm_el = el.reshape(-1, 1) / 45
+        norm_ail = ail.reshape(-1, 1) / 45
+        norm_rud = rud.reshape(-1, 1) / 45
+        norm_lef = lef.reshape(-1, 1) / 45
+        obs = torch.hstack((norm_delta_pitch, norm_delta_heading))
+        obs = torch.hstack((obs, norm_delta_vt))
+        obs = torch.hstack((obs, norm_altitude))
+        obs = torch.hstack((obs, roll_sin))
+        obs = torch.hstack((obs, roll_cos))
+        obs = torch.hstack((obs, pitch_sin))
+        obs = torch.hstack((obs, pitch_cos))
+        obs = torch.hstack((obs, heading_sin))
+        obs = torch.hstack((obs, heading_cos))
+        obs = torch.hstack((obs, norm_vt))
+        obs = torch.hstack((obs, norm_EAS))
+        obs = torch.hstack((obs, alpha_sin))
+        obs = torch.hstack((obs, alpha_cos))
+        obs = torch.hstack((obs, beta_sin))
+        obs = torch.hstack((obs, beta_cos))
+        obs = torch.hstack((obs, norm_P))
+        obs = torch.hstack((obs, norm_Q))
+        obs = torch.hstack((obs, norm_R))
+        obs = torch.hstack((obs, norm_T))
+        obs = torch.hstack((obs, norm_el))
+        obs = torch.hstack((obs, norm_ail))
+        obs = torch.hstack((obs, norm_rud))
+        obs = torch.hstack((obs, norm_lef))
+        obs = torch.hstack((obs, eas2tas.reshape(-1, 1)))
+        
+        if not self.deterministic:
+            return obs + torch.randn_like(obs) * self.noise_scale
+        else:
+            return obs
     
     def get_obs(self, env):
         """
@@ -95,7 +198,7 @@ class ControlTask(BaseTask):
             20. ego_lef                (unit: %)
             21. EAS2TAS
         """
-        npos, epos, altitude = env.model.get_position()
+        npos, epos, altitude = env.model.get_position()                    
         roll, pitch, heading = env.model.get_posture()
         vt = env.model.get_vt()
         EAS = env.model.get_EAS()
@@ -149,4 +252,8 @@ class ControlTask(BaseTask):
         obs = torch.hstack((obs, norm_rud))
         obs = torch.hstack((obs, norm_lef))
         obs = torch.hstack((obs, eas2tas.reshape(-1, 1)))
-        return obs + torch.randn_like(obs) * self.noise_scale
+        
+        if not self.deterministic:
+            return obs + torch.randn_like(obs) * self.noise_scale
+        else:
+            return obs

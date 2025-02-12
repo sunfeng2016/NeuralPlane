@@ -25,5 +25,5 @@ class EventDrivenReward(BaseRewardFunction):
         Returns:
             (tensor): reward
         """
-        reward = -200 * env.bad_done + 200 * env.is_done
+        reward = -500 * env.bad_done + 500 * env.is_done
         return reward

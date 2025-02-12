@@ -11,25 +11,29 @@ num_states: 12
 num_controls: 5
 num_actions: 3
 num_observation: 22
-max_steps: 2500             # episode length: 200s
+max_steps: 10000             # episode length
 
 # aircraft config
-altitude_limit: 2500.0
-acceleration_limit: 300.0
-max_velocity: 3          # mh
-min_velocity: 0.01       # mh
-min_alpha: -20             # 度
-max_alpha: 45              # 度
+altitude_limit: 2500.0      # 最低高度
+acceleration_limit: 300.0   # 最大加速度
+# acceleration_limit: 900.0   # 最大加速度
+max_velocity: 3             # 最大速度 mh
+min_velocity: 0.01          # 最小速度 mh
+min_alpha: -20              # 度
+max_alpha: 45               # 度
 min_beta: -30
 max_beta: 30
 color: Red
 model: f16
 
 # target config
-max_distance: 2000 # feet
-min_distance: 2000  # feet
-max_check_interval: 2500                 # step
+max_distance: 2500        # feet 用于更新目标
+min_distance: 1500        # feet 用于更新目标
+# max_check_interval: 2500  # step
+max_check_interval: 5000  # step
+# max_check_interval: 10000  # step
 min_check_interval: 300
+reach_target_steps: 1    # step 到达目标位置后持续10步
 
 # init config
 init_state: {
@@ -37,7 +41,7 @@ init_state: {
   init_vt_ft: 1100,
   init_T: 2000
 }
-max_altitude: 20000
-min_altitude: 19000
-max_vt: 1200
-min_vt: 1000
+max_altitude: 20000     # feet 用于初始化高度
+min_altitude: 19000     # feet 用于初始化高度
+max_vt: 1200            # feet/s 用于初始化速度
+min_vt: 1000            # feet/s 用于初始化速度

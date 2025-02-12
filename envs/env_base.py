@@ -7,10 +7,10 @@ import gym
 import random
 from models.model_base import BaseModel
 from tasks.task_base import BaseTask
-from utils.utils import parse_config, enu_to_geodetic, _t2n
+from utils.utils import parse_config, enu_to_geodetic, _t2n, wrap_PI
 
 
-class BaseEnv(gym.Env):
+class  BaseEnv(gym.Env):
 
     def __init__(self,
                  num_envs=10,
@@ -27,11 +27,14 @@ class BaseEnv(gym.Env):
 
         self.load(random_seed, config, model)
 
-        self.step_count = torch.zeros(self.n, dtype=torch.int64, device=self.device)
+        self.step_count = torch.zeros(self.n, dtype=torch.int64, device=self.device)  # 判断目标是否超时
         self.is_done = torch.ones(self.n, dtype=torch.bool, device=self.device)
         self.bad_done = torch.ones(self.n, dtype=torch.bool, device=self.device)
         self.exceed_time_limit = torch.ones(self.n, dtype=torch.bool, device=self.device)
         self.create_records = False
+        
+        self.episode_step = torch.zeros(self.n, dtype=torch.int64, device=self.device) # 记录轨迹是否超时
+        self.total_step = 0  # info中用
 
     def seed(self, random_seed):
         torch.manual_seed(random_seed)
@@ -75,7 +78,7 @@ class BaseEnv(gym.Env):
         return self.is_done, self.bad_done, self.exceed_time_limit, info
     
     def info(self):
-        return {}
+        return {"done": {}}
 
     def get_number_of_agents(self):
         return self.n
@@ -84,11 +87,13 @@ class BaseEnv(gym.Env):
         done = self.is_done.bool()
         bad_done = self.bad_done.bool()
         exceed_time_limit = self.exceed_time_limit.bool()
-        reset = (done | bad_done) | exceed_time_limit
+        reset = (done | bad_done) | exceed_time_limit   # 重置目标的步数
+        reset_temp = bad_done | exceed_time_limit       # 重置轨迹的步数
 
         self.model.reset(self)
         self.task.reset(self)
 
+        self.episode_step[reset_temp] = 0
         self.step_count[reset] = 0
         self.is_done[:] = 0
         self.bad_done[:] = 0
@@ -99,13 +104,24 @@ class BaseEnv(gym.Env):
     def step(self, action, render=False, count=0):
         self.reset()
         self.model.update(action)
+        
         self.step_count += 1
+        self.total_step += 1
+        self.episode_step += 1
+        
         obs = self.obs()
         info = self.info()
         done, bad_done, exceed_time_limit, info = self.done(info)
-        reward = self.reward()
+        reward = self.reward() * 0.1
         if render:
             self.render(count=count)
+        
+        info['data']['obs'] = _t2n(obs)
+        info['data']['reward'] = _t2n(reward)
+        info['data']['done'] = _t2n(done)
+        info['data']['bad_done'] = _t2n(bad_done)
+        info['data']['exceed_time_limit'] = _t2n(exceed_time_limit)
+        
         return obs, reward, done, bad_done, exceed_time_limit, info
     
     def render(self, count, filename='./tracks/F16SimRecording-'):
@@ -136,16 +152,17 @@ class BaseEnv(gym.Env):
                 npos = _t2n(npos) * 0.3048
                 epos = _t2n(epos) * 0.3048
                 alt = _t2n(alt) * 0.3048
-                roll = _t2n(roll)[0] * 180 / np.pi
-                pitch = _t2n(pitch)[0] * 180 / np.pi
-                yaw = _t2n(yaw)[0] * 180 / np.pi
+                roll = _t2n(wrap_PI(roll))[0] * 180 / np.pi
+                pitch = _t2n(wrap_PI(pitch))[0] * 180 / np.pi
+                yaw = _t2n(wrap_PI(yaw))[0] * 180 / np.pi
                 lat, lon, alt = enu_to_geodetic(epos, npos, alt, 0, 0, 0)
                 log_msg = f"{100 + i},T={lon}|{lat}|{alt}|{roll}|{pitch}|{yaw},"
                 log_msg += f"Name=F16,"
                 log_msg += f"Color=Red"
                 if log_msg is not None:
                     f.write(log_msg + "\n")
-        reset = torch.any(self.bad_done + self.is_done + self.exceed_time_limit)
+        # reset = torch.any(self.bad_done + self.is_done + self.exceed_time_limit)
+        reset = torch.any(self.bad_done + self.exceed_time_limit)
         if reset:
             self.create_records = False
             self.filename = filename + str(count) + '.txt.acmi'

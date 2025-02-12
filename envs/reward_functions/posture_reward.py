@@ -25,11 +25,33 @@ class PostureReward(BaseRewardFunction):
         """
         roll, pitch, heading = env.model.get_posture()
         vt = env.model.get_vt()
-        delta_pitch = wrap_PI(pitch - task.target_pitch) / torch.pi
-        delta_heading = wrap_PI(heading - task.target_heading) / torch.pi
-        delta_vt = (vt - task.target_vt) * 0.3048 / 340
-        reward_pitch = -delta_pitch ** 2
-        reward_heading = -delta_heading ** 2
-        reward_vt = -delta_vt ** 2
-        reward_target = reward_pitch + reward_heading + reward_vt
+        
+        # delta_pitch = wrap_PI(pitch - task.target_pitch) / torch.pi        
+        # delta_heading = wrap_PI(heading - task.target_heading) / torch.pi
+        # delta_vt = (vt - task.target_vt) * 0.3048 / 340
+        
+        # reward_pitch = -delta_pitch ** 2
+        # reward_heading = -delta_heading ** 2
+        # reward_vt = -delta_vt ** 2
+        # reward_target = reward_pitch + reward_heading + reward_vt
+        
+        delta_pitch = (wrap_PI(pitch) - task.target_pitch) * 180 / torch.pi       # degrees, 54~5   
+        delta_heading = (wrap_PI(heading) - task.target_heading) * 180 / torch.pi # degress, 54~5
+        delta_vt = (vt - task.target_vt) * 0.3048                                 # mps,  10~3
+
+        # reward_pitch = torch.exp(-(delta_pitch ** 2))
+        # reward_heading = torch.exp(-(delta_heading ** 2))
+        # reward_vt = torch.exp(-(delta_vt ** 2))
+        
+        pitch_error_scale = 5.0 # degrees        
+        reward_pitch = torch.exp(-(delta_pitch / pitch_error_scale) ** 2)
+                
+        heading_error_scale = 5.0 # degrees
+        reward_heading = torch.exp(-(delta_heading / heading_error_scale) ** 2)
+        
+        speed_error_scale = 10 # mps
+        reward_vt = torch.exp(-(delta_vt / speed_error_scale) ** 2)
+        
+        reward_target = (reward_pitch * reward_heading * reward_vt) ** (1 / 3)
+        
         return reward_target
