@@ -41,6 +41,7 @@ class Runner(object):
         self.model_dir = self.all_args.model_dir
         self.run_dir = config["run_dir"]
         self.save_dir = config["run_dir"]
+        self.data_dir = os.path.join(config["run_dir"], "raw_data")
         self.writer = writer
 
         self.load()
@@ -103,3 +104,7 @@ class Runner(object):
     def log_info(self, infos, total_num_steps):
          for k, v in infos.items():
             self.writer.add_scalar(k, v, total_num_steps)
+            
+    def log_done_info(self, done_infos, total_num_steps):
+        for k, v in done_infos.items():
+            self.writer.add_scalar(f"done/{k}", v, total_num_steps)        

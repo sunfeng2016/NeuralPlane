@@ -49,6 +49,7 @@ class F16SimRunner(Runner):
         for episode in range(episodes):
             # global profile
             # profile.enable()
+            # raw_data = {'data': []}
             for step in range(self.buffer_size):
                 # Sample actions
                 values, actions, action_log_probs, rnn_states_actor, rnn_states_critic = self.collect(step)
@@ -62,12 +63,16 @@ class F16SimRunner(Runner):
                 # for info in infos:
                 #     if 'heading_turn_counts' in info:
                 #         heading_turns_list.append(info['heading_turn_counts'])
+                self.log_done_info(infos["done"], infos["step"])
+                # raw_data['data'].append(infos['data'])
 
                 data = obs, actions, rewards, dones, bad_dones, exceed_time_limits, action_log_probs, values, rnn_states_actor, rnn_states_critic
 
                 # insert data into buffer
                 self.insert(data)
 
+            # self.save_data(raw_data, episode)
+            
             # compute return and update network
             self.compute()
             train_infos = self.train()
@@ -140,16 +145,22 @@ class F16SimRunner(Runner):
 
         dones_env = np.any(dones.squeeze(axis=-1), axis=-1)
         bad_dones_env = np.any(bad_dones.squeeze(axis=-1), axis=-1)
-        reset_env = np.any((dones + bad_dones + exceed_time_limits).squeeze(axis=-1), axis=-1)
+        # reset_env = np.any((dones + bad_dones + exceed_time_limits).squeeze(axis=-1), axis=-1)
+        
+        # 0108        
+        exceed_time_limits_env = np.any(exceed_time_limits.squeeze(axis=-1), axis=-1)  
+        reset_env = np.any((bad_dones + exceed_time_limits).squeeze(axis=-1), axis=-1)
 
         rnn_states_actor[reset_env == True] = np.zeros(((reset_env == True).sum(), *rnn_states_actor.shape[1:]), dtype=np.float32)
         rnn_states_critic[reset_env == True] = np.zeros(((reset_env == True).sum(), *rnn_states_critic.shape[1:]), dtype=np.float32)
 
         masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
-        masks[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
+        # masks[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32) # 0108
+        masks[exceed_time_limits_env == True] = np.zeros(((exceed_time_limits_env == True).sum(), self.num_agents, 1), dtype=np.float32) # 0110
 
         bad_masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
         bad_masks[bad_dones_env == True] = np.zeros(((bad_dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
+        # bad_masks[exceed_time_limits_env == True] = np.zeros(((exceed_time_limits_env == True).sum(), self.num_agents, 1), dtype=np.float32) # 0108
 
         self.buffer.insert(obs, actions, rewards, masks, action_log_probs, values, rnn_states_actor, rnn_states_critic, bad_masks)
 
@@ -227,3 +238,15 @@ class F16SimRunner(Runner):
         torch.save(policy_actor_state_dict, str(save_dir) + '/actor_latest.pt')
         policy_critic_state_dict = self.policy.critic.state_dict()
         torch.save(policy_critic_state_dict, str(save_dir) + '/critic_latest.pt')
+        
+    def save_data(self, raw_data, episode):
+        save_dir = os.path.join(self.data_dir, f'episode_{episode}')
+        os.makedirs(save_dir, exist_ok=True)
+        datafile = os.path.join(save_dir, 'raw_data.pkl')
+        
+        import pickle
+        with open(datafile, 'wb') as f:
+            pickle.dump(raw_data, f)
+        
+        msg = f'raw_data.pkl has been saved to \n {datafile}'
+        logging.info(msg)
